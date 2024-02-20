@@ -1,4 +1,4 @@
-package scrape
+package scraper
 
 import (
 	"encoding/csv"
@@ -13,12 +13,33 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-var (
-	baseURL string = "https://www.saramin.co.kr/zf_user/search/recruit?&searchword=python&recruitPageCount=40"
-	userAgent string = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-)
+// Scrape Saramin by a term
+func Scrape(term string) {
+	baseURL = fmt.Sprintf("%s&searchword=%s", baseURL, term)
+	var wg sync.WaitGroup
 
-func GetPage(page int, chMain chan <- []ExtractedJob) {
+	totalPages := getPages()
+	
+	ch := make(chan []extractedJob)
+	for i:=0; i<totalPages; i++ {
+		go getPage(i+1, ch)
+	}
+
+	w := createFile()
+	defer w.Flush()
+
+	for i:=0; i<totalPages; i++ {
+		wg.Add(1)
+		go writeJobs(<-ch, w, &wg)
+		// jobs = append(jobs, extractedJobs...)  // 2개의 배열을 합치려면 ... 붙이기
+	}
+
+	wg.Wait()
+
+	fmt.Println("Done")
+}
+
+func getPage(page int, chMain chan <- []extractedJob) {
 	pageURL := baseURL + "&recruitPage=" + strconv.Itoa(page)
 	fmt.Println(pageURL)
 
@@ -30,13 +51,13 @@ func GetPage(page int, chMain chan <- []ExtractedJob) {
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	checkErr(err)
 
-	ch := make(chan ExtractedJob)
+	ch := make(chan extractedJob)
 	searchCards := doc.Find(".item_recruit")
 	searchCards.Each(func(i int, card *goquery.Selection){
 		go extractJob(card, ch)
 	})
 
-	var jobs []ExtractedJob
+	var jobs []extractedJob
 	for i:=0; i<searchCards.Length(); i++ {
 		job := <- ch
 		jobs = append(jobs, job)
@@ -44,7 +65,7 @@ func GetPage(page int, chMain chan <- []ExtractedJob) {
 	chMain <- jobs
 }
 
-func GetPages() (pages int) {
+func getPages() (pages int) {
 	res, err := http.Get(baseURL)
 	checkErr(err)
 	checkStatusCode(res)
@@ -60,7 +81,7 @@ func GetPages() (pages int) {
 	return pages
 }
 
-func WriteJobs(jobs []ExtractedJob, w *csv.Writer, wg *sync.WaitGroup) {
+func writeJobs(jobs []extractedJob, w *csv.Writer, wg *sync.WaitGroup) {
 	defer wg.Done()
 	
 	chJob := make(chan []string)
@@ -75,7 +96,7 @@ func WriteJobs(jobs []ExtractedJob, w *csv.Writer, wg *sync.WaitGroup) {
 	}
 }
 
-func writeJob(chJob chan <- []string, job ExtractedJob) {
+func writeJob(chJob chan <- []string, job extractedJob) {
 	chJob <- []string{
 		"https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx=47553391"+job.id, 
 		job.title, 
@@ -86,14 +107,14 @@ func writeJob(chJob chan <- []string, job ExtractedJob) {
 	}
 }
 
-func extractJob(card *goquery.Selection, ch chan <- ExtractedJob) {
+func extractJob(card *goquery.Selection, ch chan <- extractedJob) {
 	id, _ := card.Attr("value")
-	title := cleanString(card.Find(".area_job>.job_tit>a").Text())
-	location := cleanString(card.Find(".area_job>.job_condition>span>a").Text())
-	experience := cleanString(card.Find(".area_job>.job_condition>span:nth-child(2)").Text())
-	employment := cleanString(card.Find(".area_job>.job_condition>span:nth-child(4)").Text())
-	company := cleanString(card.Find(".area_corp > strong > a").Text())
-	ch <- ExtractedJob{
+	title := CleanString(card.Find(".area_job>.job_tit>a").Text())
+	location := CleanString(card.Find(".area_job>.job_condition>span>a").Text())
+	experience := CleanString(card.Find(".area_job>.job_condition>span:nth-child(2)").Text())
+	employment := CleanString(card.Find(".area_job>.job_condition>span:nth-child(4)").Text())
+	company := CleanString(card.Find(".area_corp > strong > a").Text())
+	ch <- extractedJob{
 		id: 		id,
 		title: 		title,
 		location: 	location,
@@ -103,7 +124,7 @@ func extractJob(card *goquery.Selection, ch chan <- ExtractedJob) {
 	}
 }
 
-func CreateFile() (w *csv.Writer) {
+func createFile() (w *csv.Writer) {
 	file, err := os.Create("jobs.csv")
 	checkErr(err)
 	
@@ -128,6 +149,6 @@ func checkStatusCode(res *http.Response) {
 	}
 }
 
-func cleanString(str string) string {
+func CleanString(str string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(str)), " ")
 }

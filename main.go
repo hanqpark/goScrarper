@@ -1,33 +1,28 @@
 package main
 
 import (
-	"fmt"
-	"sync"
+	"os"
+	"strings"
 
-	"github.com/hanqpark/jobScraper/scrape"
+	"github.com/hanqpark/goScraper/scraper"
+	"github.com/labstack/echo"
 )
 
+func handleHome(c echo.Context) error {
+	return c.File("index.html")
+}
+
+func handleScrape(c echo.Context) error {
+	defer os.Remove(scraper.FILE_NAME)
+	term := strings.ToLower(scraper.CleanString(c.FormValue("term")))
+	scraper.Scrape(term)
+	return c.Attachment(scraper.FILE_NAME, term + ".csv")
+}
+
 func main() {
-	var wg sync.WaitGroup
-
-	totalPages := scrape.GetPages()
-	
-	ch := make(chan []scrape.ExtractedJob)
-	for i:=0; i<totalPages; i++ {
-		go scrape.GetPage(i+1, ch)
-	}
-
-	w := scrape.CreateFile()
-	defer w.Flush()
-
-	for i:=0; i<totalPages; i++ {
-		wg.Add(1)
-		go scrape.WriteJobs(<-ch, w, &wg)
-		// jobs = append(jobs, extractedJobs...)  // 2개의 배열을 합치려면 ... 붙이기
-	}
-
-	wg.Wait()
-
-	fmt.Println("Done")
+	e := echo.New()
+	e.GET("/", handleHome)
+	e.POST("/scrape", handleScrape)
+	e.Logger.Fatal(e.Start(":1323"))
 }
 
